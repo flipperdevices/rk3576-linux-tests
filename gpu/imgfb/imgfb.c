@@ -47,7 +47,9 @@ uint8_t *decode_farbfeld(FILE *fp, uint32_t *width_, uint32_t *height_) {
 	uint32_t width  = fgetc(fp) << 030 | fgetc(fp) << 020 | fgetc(fp) << 010 | fgetc(fp); // big endian = highest byte comes first
 	uint32_t height = fgetc(fp) << 030 | fgetc(fp) << 020 | fgetc(fp) << 010 | fgetc(fp);
 	uint8_t *pixels;
-	pixels = malloc(width * height * 4);
+	if (width != 0 && height > SIZE_MAX / width) { eprintf("image too large\n"); return NULL; }
+	size_t npixels = (size_t)width * height;
+	pixels = calloc(npixels, 4);
 	if (!pixels) { eprintf("malloc: %s\n", strerr); return NULL; }
 	*width_ = width;
 	*height_ = height;
@@ -142,13 +144,13 @@ int main(int argc, char *argv[]) {
 
 		fb_path = malloc(strlen(fb_) + 10);
 		if (!fb_path)   { eprintf("malloc: %s\n", strerr); return errno; }
-		sprintf(fb_path, "/dev/%s", fb_);
+		snprintf(fb_path, strlen(fb_) + 10, "/dev/%s", fb_);
 		size_path = malloc(strlen(fb_) + 50);
 		if (!size_path) { eprintf("malloc: %s\n", strerr); return errno; }
-		sprintf(size_path, "/sys/class/graphics/%s/virtual_size", fb_);
+		snprintf(size_path, strlen(fb_) + 50, "/sys/class/graphics/%s/virtual_size", fb_);
 		bpp_path = malloc(strlen(fb_) + 50);
 		if (!bpp_path)  { eprintf("malloc: %s\n", strerr); return errno; }
-		sprintf(bpp_path, "/sys/class/graphics/%s/bits_per_pixel", fb_);
+		snprintf(bpp_path, strlen(fb_) + 50, "/sys/class/graphics/%s/bits_per_pixel", fb_);
 		offset_x = atoi(x_);
 		offset_y = atoi(y_);
 	}
