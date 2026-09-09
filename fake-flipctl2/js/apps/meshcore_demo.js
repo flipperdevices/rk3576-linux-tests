@@ -80,6 +80,8 @@ var MeshcoreDemoScene = (function() {
         { name: 'Tony',    time: '17:27', text: 'Fuck you Ezekiel!',                        hops: '12 hops' },
         { name: 'Ezekiel', time: '17:27', text: 'Fuck you!',                                hops: '3 hops'  },
         { name: 'Tony',    time: '17:28', text: 'Fuck you!',                                hops: '12 hops' },
+        { name: 'RyanGhosting45',   time: '17:31', text: 'Test 123', hops: '5 hops' },
+        { name: 'AlwaysVirgin1337', time: '17:33', text: 'Hi chat!', hops: '9 hops' },
         { name: 'aribiderci', time: '17:36', text: 'Hi to all! Test!',  hops: '15 hops' },
         { name: 'Dr Zlo',     time: '17:38', text: 'Execute order 66', hops: '7 hops'  },
         { name: 'Scorp',      time: '17:40', text: 'Copy that.',       hops: '1 hop'   }
