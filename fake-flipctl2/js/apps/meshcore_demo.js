@@ -8,6 +8,8 @@
  */
 var MeshcoreDemoScene = (function() {
     var TITLE_H = 16;
+    // Left anchor of the channel label in the title strip.
+    var CHANNEL_X = 190;
 
     // Message boxes (received message bubbles): light-gray rounded
     // frame pinned 5 px off the left edge; sender name + time in
@@ -164,8 +166,8 @@ var MeshcoreDemoScene = (function() {
     function MeshcoreDemoScene(sceneManager) {
         var self = this;
         this.sceneManager    = sceneManager || null;
-        this.displayName     = 'MESHCORE';
-        this.breadcrumbTitle = 'MESHCORE';
+        this.displayName     = 'MeshCore';
+        this.breadcrumbTitle = 'MeshCore';
         this.icon = (typeof Icons !== 'undefined' && Icons.meshcore) ? Icons.meshcore : null;
         // Feed scroll offset (px). null → not initialised yet; the
         // first render lands it at maxScroll() (newest at bottom).
@@ -399,24 +401,10 @@ var MeshcoreDemoScene = (function() {
         }
         Born2bSportyV2FlipCTL.draw(ctx, this.displayName, 20, UI.STATUS_BAR_H, '#000');
 
-        // Chat name, centred in the strip (Haxrcorp — secondary to
-        // the Sporty app name).
-        var chat  = 'Public';
-        var chatW = HaxrCorp4090FlipCTL.textWidth(chat);
-        HaxrCorp4090FlipCTL.draw(ctx, chat,
-            Math.floor((canvas.w - chatW) / 2), TITLE_Y + 3, '#000');
-
-        // Sync status flush right: check icon + "Up to date".
-        var sync  = 'Up to date';
-        var syncW = HaxrCorp4090FlipCTL.textWidth(sync);
-        var syncX = canvas.w - 2 - syncW;
-        if (typeof Icons !== 'undefined' && Icons.check_icon) {
-            canvas.drawSprite(Icons.check_icon,
-                syncX - Icons.check_icon.w - 3,
-                TITLE_Y + Math.floor((TITLE_H - Icons.check_icon.h) / 2),
-                '#000');
-        }
-        HaxrCorp4090FlipCTL.draw(ctx, sync, syncX, TITLE_Y + 3, '#000');
+        // Channel label — left-flushed at a fixed anchor (replaces
+        // the old centred "Public" + right-side "Up to date").
+        HaxrCorp4090FlipCTL.draw(ctx, 'Public channel',
+            CHANNEL_X, TITLE_Y + 3, '#000');
 
         // Bottom-bar New button (V key).
         this._newBtn.render(canvas);

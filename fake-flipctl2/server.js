@@ -718,7 +718,7 @@ function getPowerInfo() {
 }
 
 var UPDATE_REPO = '/flipperone-testing';
-var UPDATE_BRANCH = 'dev';
+var UPDATE_BRANCH = 'meshcore_demo';
 
 function getUpdateStatus() {
     var result = { available: false, currentCommit: null, commits: [], error: null };
