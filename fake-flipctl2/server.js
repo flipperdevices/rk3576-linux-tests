@@ -718,24 +718,131 @@ function getPowerInfo() {
 }
 
 var UPDATE_REPO = '/flipperone-testing';
-var UPDATE_BRANCH = 'meshcore_demo';
+// Every git invocation below goes through this prefix. safe.directory
+// keeps git from refusing the repo when the service user differs from
+// the checkout's owner (root-owned tree, non-root node process).
+var GIT_CMD = 'git -c safe.directory=' + UPDATE_REPO + ' -C ' + UPDATE_REPO;
 
-function getUpdateStatus() {
-    var result = { available: false, currentCommit: null, commits: [], error: null };
+// Branch the working tree has checked out. '' on detached HEAD or
+// when git itself fails (missing repo, permissions).
+function currentBranch() {
     try {
-        result.currentCommit = execSync('git -C ' + UPDATE_REPO + ' log --oneline -1', { encoding: 'utf8', timeout: 5000 }).trim();
+        var b = execSync(GIT_CMD + ' rev-parse --abbrev-ref HEAD',
+            { encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+        return (b && b !== 'HEAD') ? b : '';
+    } catch (e) {
+        return '';
+    }
+}
+
+// Shape check for a branch name BEFORE it is interpolated into a git
+// command line: only ref-safe characters, no '..', no leading dash,
+// no trailing slash / '.lock'. Anything else is refused outright.
+var BRANCH_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._\/-]*$/;
+function isSaneBranchName(b) {
+    return typeof b === 'string' && b.length > 0 && b.length <= 120
+        && BRANCH_NAME_RE.test(b)
+        && b.indexOf('..') === -1 && b.indexOf('//') === -1
+        && b.slice(-1) !== '/' && b.slice(-5) !== '.lock';
+}
+
+// Branches available on origin, for the Settings → Update picker.
+// `git ls-remote --heads` asks the remote directly, so it sees every
+// branch even though the device clone is single-branch (its fetch
+// refspec only maps one branch). Successful remote answers are cached
+// for BRANCH_CACHE_MS; offline we fall back to the refs already on
+// disk (local heads + remote-tracking) and don't cache, so the next
+// call retries the network.
+var BRANCH_CACHE_MS = 60000;
+var _branchCache = { at: 0, list: null };
+function listBranches(force) {
+    var now = Date.now();
+    if (!force && _branchCache.list && (now - _branchCache.at) < BRANCH_CACHE_MS) {
+        return { branches: _branchCache.list, source: 'remote', error: null };
+    }
+    var list = null, source = null, error = null;
+    try {
+        var out = execSync(GIT_CMD + ' ls-remote --heads origin',
+            { encoding: 'utf8', timeout: 15000, stdio: ['ignore', 'pipe', 'ignore'] });
+        list = out.split('\n').map(function(l) {
+            var m = l.match(/\trefs\/heads\/(.+)$/);
+            return m ? m[1].trim() : null;
+        }).filter(Boolean);
+        source = 'remote';
+    } catch (e) {
+        error = 'No internet';
+    }
+    if (!list || !list.length) {
+        try {
+            var loc = execSync(GIT_CMD
+                + ' for-each-ref --format=%(refname:short) refs/heads refs/remotes/origin',
+                { encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] });
+            var seen = {};
+            list = [];
+            loc.split('\n').forEach(function(r) {
+                r = r.trim();
+                if (!r || r === 'origin' || r === 'origin/HEAD') return;
+                r = r.replace(/^origin\//, '');
+                if (!seen[r]) { seen[r] = true; list.push(r); }
+            });
+            source = 'local';
+        } catch (e2) {
+            list = [];
+            error = error || 'Cannot read local repo';
+        }
+    }
+    // The checked-out branch is always offered, even if origin no
+    // longer has it — otherwise the picker would show a value that
+    // is not in its own list.
+    var cur = currentBranch();
+    if (cur && list.indexOf(cur) === -1) list.push(cur);
+    list = list.filter(isSaneBranchName).sort(function(a, b) {
+        var la = a.toLowerCase(), lb = b.toLowerCase();
+        return la < lb ? -1 : la > lb ? 1 : 0;
+    });
+    if (source === 'remote') {
+        _branchCache = { at: now, list: list };
+    }
+    return { branches: list, source: source, error: error };
+}
+
+// A branch the update endpoints may act on: well-formed AND known to
+// origin (or the one currently checked out).
+function isValidBranch(b) {
+    if (!isSaneBranchName(b)) return false;
+    if (b === currentBranch()) return true;
+    return listBranches(false).branches.indexOf(b) !== -1;
+}
+
+// Commits HEAD is behind origin/<targetBranch> (default: the
+// checked-out branch). `branch` in the result is what the device
+// runs, `target` what was compared against.
+function getUpdateStatus(targetBranch) {
+    var branch = targetBranch || currentBranch();
+    var result = { available: false, currentCommit: null, commits: [],
+                   error: null, branch: currentBranch(), target: branch };
+    try {
+        result.currentCommit = execSync(GIT_CMD + ' log --oneline -1', { encoding: 'utf8', timeout: 5000 }).trim();
     } catch (e) {
         result.error = 'Cannot read local repo';
         return result;
     }
+    if (!branch) {
+        result.error = 'Detached HEAD';
+        return result;
+    }
     try {
-        execSync('git -C ' + UPDATE_REPO + ' fetch origin ' + UPDATE_BRANCH + ' 2>&1', { encoding: 'utf8', timeout: 15000 });
+        // Explicit refspec: single-branch clones have no default
+        // fetch mapping for extra branches, and the comparison
+        // below needs the remote-tracking ref to exist.
+        execSync(GIT_CMD + ' fetch origin +' + branch
+            + ':refs/remotes/origin/' + branch + ' 2>&1', { encoding: 'utf8', timeout: 15000 });
     } catch (e) {
         result.error = 'No internet';
         return result;
     }
     try {
-        var log = execSync('git -C ' + UPDATE_REPO + ' log --oneline HEAD..origin/' + UPDATE_BRANCH, { encoding: 'utf8', timeout: 5000 }).trim();
+        var log = execSync(GIT_CMD + ' log --oneline HEAD..origin/' + branch, { encoding: 'utf8', timeout: 5000 }).trim();
         if (log) {
             result.available = true;
             result.commits = log.split('\n');
@@ -752,12 +859,39 @@ function logUpdate(msg) {
     console.log('[update] ' + msg);
 }
 
+// Check out `br` at the fresh remote tip (create-or-reset the local
+// branch; -f drops stray local edits). Used by /api/update/apply
+// when the picker targets a branch other than the checked-out one.
+function doSwitch(br) {
+    var result = { success: false, error: null };
+    logUpdate('Switching branch to ' + br);
+    try {
+        var o1 = execSync(GIT_CMD + ' fetch origin +' + br
+            + ':refs/remotes/origin/' + br + ' 2>&1',
+            { encoding: 'utf8', timeout: 30000 });
+        logUpdate('fetch: ' + o1.trim().slice(-200));
+        var o2 = execSync(GIT_CMD + ' checkout -f -B ' + br
+            + ' refs/remotes/origin/' + br + ' 2>&1',
+            { encoding: 'utf8', timeout: 15000 });
+        logUpdate('checkout: ' + o2.trim().slice(-200));
+        result.success = true;
+    } catch (e) {
+        var msg = (e.stderr || e.stdout || e.message || 'Unknown error').toString();
+        logUpdate('switch failed: ' + msg.slice(-300));
+        result.error = msg.slice(-300);
+    }
+    return result;
+}
+
+// Pull the checked-out branch. NOTE: this is destructive for local
+// work — `reset --hard` + `clean -fd` throw away every uncommitted
+// change and untracked file in the repo before pulling.
 function doUpdate() {
     var result = { success: false, error: null };
     logUpdate('Starting update');
     try {
         logUpdate('git reset --hard HEAD');
-        var r1 = execSync('git -C ' + UPDATE_REPO + ' reset --hard HEAD 2>&1', { encoding: 'utf8', timeout: 5000 });
+        var r1 = execSync(GIT_CMD + ' reset --hard HEAD 2>&1', { encoding: 'utf8', timeout: 5000 });
         logUpdate('reset: ' + r1.trim());
     } catch (e) {
         logUpdate('reset failed: ' + e.message);
@@ -766,14 +900,15 @@ function doUpdate() {
     }
     try {
         logUpdate('git clean -fd');
-        var r2 = execSync('git -C ' + UPDATE_REPO + ' clean -fd 2>&1', { encoding: 'utf8', timeout: 5000 });
+        var r2 = execSync(GIT_CMD + ' clean -fd 2>&1', { encoding: 'utf8', timeout: 5000 });
         logUpdate('clean: ' + r2.trim());
     } catch (e) {
         logUpdate('clean failed: ' + e.message);
     }
     try {
-        logUpdate('git pull origin ' + UPDATE_BRANCH);
-        var r3 = execSync('git -C ' + UPDATE_REPO + ' pull origin ' + UPDATE_BRANCH + ' 2>&1', { encoding: 'utf8', timeout: 30000 });
+        var upBranch = currentBranch();
+        logUpdate('git pull origin ' + upBranch);
+        var r3 = execSync(GIT_CMD + ' pull origin ' + upBranch + ' 2>&1', { encoding: 'utf8', timeout: 30000 });
         logUpdate('pull: ' + r3.trim());
         result.success = true;
     } catch (e) {
@@ -4179,14 +4314,49 @@ var server = http.createServer(function(req, res) {
         res.end(JSON.stringify(modemCache));
         return;
     }
-    if (req.url === '/api/update/check') {
-        var update = getUpdateStatus();
+    // Branch list for the Update screen's picker. ?refresh=1 bypasses
+    // the 60 s cache (used after a failed check so a flaky link can
+    // be retried without waiting).
+    if (req.url.split('?')[0] === '/api/update/branches' && req.method === 'GET') {
+        var brForce = (req.url.split('?')[1] || '').split('&').indexOf('refresh=1') !== -1;
+        var brList  = listBranches(brForce);
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify({ branches: brList.branches, current: currentBranch(),
+                                 source: brList.source, error: brList.error }));
+        return;
+    }
+    if (req.url.split('?')[0] === '/api/update/check' && req.method === 'GET') {
+        var chkBranch = null;
+        (req.url.split('?')[1] || '').split('&').forEach(function(kv) {
+            var i = kv.indexOf('=');
+            if (i > 0 && kv.slice(0, i) === 'branch') {
+                try { chkBranch = decodeURIComponent(kv.slice(i + 1)); } catch (e) {}
+            }
+        });
+        if (chkBranch && !isValidBranch(chkBranch)) chkBranch = null;
+        var update = getUpdateStatus(chkBranch);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(update));
         return;
     }
+    // { branch }: same as checked-out → pull; other → checkout onto
+    // the fresh remote tip. Either way the node service restarts.
+    // No body / no `branch` field keeps the legacy meaning (pull the
+    // checked-out branch). A `branch` that is present but unknown
+    // is a hard 400 — it must NEVER fall back to the destructive
+    // pull, a typo would wipe local work.
     if (req.url === '/api/update/apply' && req.method === 'POST') {
-        var upResult = doUpdate();
+        readJsonBody(req, function(err, body) {
+        var hasBranch = !err && body && typeof body.branch === 'string' && body.branch.length > 0;
+        if (hasBranch && !isValidBranch(body.branch)) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'Bad branch' }));
+            return;
+        }
+        var target = hasBranch ? body.branch : currentBranch();
+        var upResult = (target === currentBranch())
+            ? doUpdate()
+            : doSwitch(target);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(upResult));
         if (upResult.success) {
@@ -4202,6 +4372,7 @@ var server = http.createServer(function(req, res) {
                 stdio: 'ignore'
             }).unref();
         }
+        });
         return;
     }
     if (req.url === '/api/routing') {

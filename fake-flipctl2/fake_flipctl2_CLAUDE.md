@@ -24,8 +24,9 @@ A web application that simulates the Flipper One LCD screen user interface. It r
   - **`/api/ethernet`** — ethernet link/IP info
   - **`/api/hostname`** (GET) — returns `{ hostname }`
   - **`/api/version`** (GET) — returns `{ id: SERVER_ID }`; client polls this to detect a server restart and reload the page
-  - **`/api/update/check`** — check for available update
-  - **`/api/update/apply`** (POST) — apply update, then `daemon-reload` + restart `fake-flipctl-node-server.service` via transient `systemd-run` (survives the restart)
+  - **`/api/update/branches`** (GET, `?refresh=1` bypasses the 60 s cache) — `{ branches[], current, source: 'remote'|'local', error }`; branches come from `git ls-remote --heads origin` (so the single-branch device clone still sees every branch), sorted case-insensitively, with the checked-out branch always included. Offline falls back to on-disk refs. Feeds the Settings → Update branch dropdown
+  - **`/api/update/check`** (GET, `?branch=X`) — commits HEAD is behind `origin/X` (default: checked-out branch). `X` must pass `isValidBranch` (ref-safe name AND present in the branch list) or it is ignored
+  - **`/api/update/apply`** (POST `{ branch }`) — same branch → `reset --hard` + `clean -fd` + `pull`; other branch → `fetch` + `checkout -f -B` onto the remote tip. Then `daemon-reload` + restart `fake-flipctl-node-server.service` via transient `systemd-run` (survives the restart). **Destroys every uncommitted change in `/flipperone-testing`** — commit + push before pressing Update on a device you develop on
   - **`/api/switch/flipctl`** (POST) — swaps the `/flipperone-testing/active-flipctl` symlink to the other variant (fake-flipctl ↔ fake-flipctl2), then restarts the node service. Client reloads via `/api/version` polling
   - **`/api/sound/files`** — list playable sound files
   - **`/api/sound/play`** (POST `{ file }`) — play a file
@@ -234,7 +235,7 @@ fake-flipctl2/
         ├── routing.js             # Routing info via /api/routing
         ├── ethernet.js            # Ethernet list + verbose IfaceDetailModal (see "Ethernet verbose detail modal")
         ├── sound.js               # Sound menu: files, devices, volume, driver restart (via /api/sound/*)
-        ├── update.js              # OTA update via /api/update/check + /api/update/apply
+        ├── update.js              # OTA update: branch dropdown (/api/update/branches) + check/apply
         ├── screentest.js          # Display test pattern scene
         ├── figma_live_preview.js  # Embeds a Figma prototype in a 256×144 iframe; shows a mix-blend "x2 to exit" hint
         └── boot_menu_ui_demo.js   # Complex UI demo with profiles, cloning, rename
