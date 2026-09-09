@@ -37,6 +37,14 @@ echo "CPU stress test started (PID: $STRESS_PID)"
 # Update marker file with PID for the main script to kill later
 echo "PID=${STRESS_PID}" >> "${RESULTS_DIR}/cpu_stress_marker.txt"
 
+# stress-ng can exit straight away (unsupported option, cgroup limit, no memory).
+# Record that so the report doesn't count a test that never ran as a pass.
+sleep 1
+if ! kill -0 "${STRESS_PID}" 2>/dev/null; then
+    echo "STATUS=FAILED" >> "${RESULTS_DIR}/cpu_stress_marker.txt"
+    echo "CPU stress test exited immediately, see cpu_stress.log"
+fi
+
 # Keep running until killed by main script
 wait $STRESS_PID 2>/dev/null
 

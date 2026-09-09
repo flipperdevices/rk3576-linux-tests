@@ -284,10 +284,10 @@ def generate_combined_report(results_dir):
     if os.path.exists(cpu_stress_marker_file):
         with open(cpu_stress_marker_file, 'r') as f:
             marker_content = f.read()
-            if 'CPU_STRESS=RUNNING' in marker_content or 'PID=' in marker_content:
-                cpu_stress_status = 'success'  # Assume success if marker exists
-            elif 'STATUS=FAILED' in marker_content:
+            if 'STATUS=FAILED' in marker_content:
                 cpu_stress_status = 'failed'
+            elif 'CPU_STRESS=RUNNING' in marker_content or 'PID=' in marker_content:
+                cpu_stress_status = 'success'
     
     # Read CPU stress log content
     cpu_stress_log_file = os.path.join(results_dir, 'cpu_stress.log')
@@ -304,10 +304,10 @@ def generate_combined_report(results_dir):
     if os.path.exists(gpu_stress_marker_file):
         with open(gpu_stress_marker_file, 'r') as f:
             marker_content = f.read()
-            if 'GPU_STRESS=RUNNING' in marker_content or 'PID=' in marker_content:
-                gpu_stress_status = 'success'  # Assume success if marker exists
-            elif 'STATUS=FAILED' in marker_content:
+            if 'STATUS=FAILED' in marker_content:
                 gpu_stress_status = 'failed'
+            elif 'GPU_STRESS=RUNNING' in marker_content or 'PID=' in marker_content:
+                gpu_stress_status = 'success'
     
     # Read GPU stress log content
     gpu_stress_log_file = os.path.join(results_dir, 'gpu_stress.log')

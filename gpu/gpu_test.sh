@@ -103,6 +103,20 @@ echo "PIDs: $PID_LIST"
 # Update marker file with PIDs for the main script to kill later
 echo "PID=${PID_LIST}" >> "${RESULTS_DIR}/gpu_stress_marker.txt"
 
+# glmark2 exits straight away without a working GL context. Record that so the
+# report doesn't count a test that never ran as a pass.
+sleep 1
+GPU_STRESS_ALIVE=false
+for PID in $PID_LIST; do
+    if kill -0 "$PID" 2>/dev/null; then
+        GPU_STRESS_ALIVE=true
+    fi
+done
+if [ "$GPU_STRESS_ALIVE" = false ]; then
+    echo "STATUS=FAILED" >> "${RESULTS_DIR}/gpu_stress_marker.txt"
+    echo "GPU stress processes exited immediately, see gpu_stress.log"
+fi
+
 # Show countdown dialog using yad if available
 if [ "$YAD_AVAILABLE" = true ]; then
     # Calculate timeout in seconds
