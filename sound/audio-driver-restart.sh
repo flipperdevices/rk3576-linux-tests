@@ -73,9 +73,14 @@ if aplay -l 2>/dev/null | grep -q "NAU8822"; then
     # Restart PipeWire to pick up the new card
     if command -v pipewire >/dev/null 2>&1; then
         log "Restarting PipeWire to detect new sound card..."
-        systemctl --user restart pipewire pipewire-pulse wireplumber 2>/dev/null || true
-        sleep 1
-        log "PipeWire restarted"
+        if systemctl --user restart pipewire pipewire-pulse wireplumber 2>/dev/null; then
+            sleep 1
+            log "PipeWire restarted"
+        else
+            warn "Could not restart PipeWire. This script runs as root, so --user targets"
+            warn "root's session rather than the desktop user's. Restart it from that user"
+            warn "if the card is still missing there."
+        fi
     fi
 else
     err "NAU8822 sound card still not present after rebind"
