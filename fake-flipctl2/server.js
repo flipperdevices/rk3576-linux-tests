@@ -720,8 +720,10 @@ function getPowerInfo() {
 var UPDATE_REPO = '/flipperone-testing';
 var UPDATE_BRANCH = 'dev';
 
-function getUpdateStatus() {
-    var result = { available: false, currentCommit: null, commits: [], error: null };
+function getUpdateStatus(targetBranch) {
+    var branch = targetBranch || currentBranch();
+    var result = { available: false, currentCommit: null, commits: [],
+                   error: null, branch: currentBranch(), target: branch };
     try {
         result.currentCommit = execSync('git -C ' + UPDATE_REPO + ' log --oneline -1', { encoding: 'utf8', timeout: 5000 }).trim();
     } catch (e) {
@@ -729,13 +731,17 @@ function getUpdateStatus() {
         return result;
     }
     try {
-        execSync('git -C ' + UPDATE_REPO + ' fetch origin ' + UPDATE_BRANCH + ' 2>&1', { encoding: 'utf8', timeout: 15000 });
+        // Explicit refspec: single-branch clones have no default
+        // fetch mapping for extra branches, and the comparison
+        // below needs the remote-tracking ref to exist.
+        execSync('git -C ' + UPDATE_REPO + ' fetch origin +' + branch
+            + ':refs/remotes/origin/' + branch + ' 2>&1', { encoding: 'utf8', timeout: 15000 });
     } catch (e) {
         result.error = 'No internet';
         return result;
     }
     try {
-        var log = execSync('git -C ' + UPDATE_REPO + ' log --oneline HEAD..origin/' + UPDATE_BRANCH, { encoding: 'utf8', timeout: 5000 }).trim();
+        var log = execSync('git -C ' + UPDATE_REPO + ' log --oneline HEAD..origin/' + branch, { encoding: 'utf8', timeout: 5000 }).trim();
         if (log) {
             result.available = true;
             result.commits = log.split('\n');
@@ -750,6 +756,30 @@ function logUpdate(msg) {
     var ts = new Date().toISOString();
     try { fs.appendFileSync('/tmp/fake-flipctl-update.log', ts + ' ' + msg + '\n'); } catch (e) {}
     console.log('[update] ' + msg);
+}
+
+// Check out `br` at the fresh remote tip (create-or-reset the local
+// branch; -f drops stray local edits). Used by /api/update/apply
+// when the picker targets a branch other than the checked-out one.
+function doSwitch(br) {
+    var result = { success: false, error: null };
+    logUpdate('Switching branch to ' + br);
+    try {
+        var o1 = execSync('git -C ' + UPDATE_REPO + ' fetch origin +' + br
+            + ':refs/remotes/origin/' + br + ' 2>&1',
+            { encoding: 'utf8', timeout: 30000 });
+        logUpdate('fetch: ' + o1.trim().slice(-200));
+        var o2 = execSync('git -C ' + UPDATE_REPO + ' checkout -f -B ' + br
+            + ' refs/remotes/origin/' + br + ' 2>&1',
+            { encoding: 'utf8', timeout: 15000 });
+        logUpdate('checkout: ' + o2.trim().slice(-200));
+        result.success = true;
+    } catch (e) {
+        var msg = (e.stderr || e.stdout || e.message || 'Unknown error').toString();
+        logUpdate('switch failed: ' + msg.slice(-300));
+        result.error = msg.slice(-300);
+    }
+    return result;
 }
 
 function doUpdate() {
@@ -772,8 +802,9 @@ function doUpdate() {
         logUpdate('clean failed: ' + e.message);
     }
     try {
-        logUpdate('git pull origin ' + UPDATE_BRANCH);
-        var r3 = execSync('git -C ' + UPDATE_REPO + ' pull origin ' + UPDATE_BRANCH + ' 2>&1', { encoding: 'utf8', timeout: 30000 });
+        var upBranch = currentBranch();
+        logUpdate('git pull origin ' + upBranch);
+        var r3 = execSync('git -C ' + UPDATE_REPO + ' pull origin ' + upBranch + ' 2>&1', { encoding: 'utf8', timeout: 30000 });
         logUpdate('pull: ' + r3.trim());
         result.success = true;
     } catch (e) {
@@ -4179,14 +4210,27 @@ var server = http.createServer(function(req, res) {
         res.end(JSON.stringify(modemCache));
         return;
     }
-    if (req.url === '/api/update/check') {
-        var update = getUpdateStatus();
+    if (req.url.split('?')[0] === '/api/update/check' && req.method === 'GET') {
+        var chkBranch = null;
+        (req.url.split('?')[1] || '').split('&').forEach(function(kv) {
+            var i = kv.indexOf('=');
+            if (i > 0 && kv.slice(0, i) === 'branch') {
+                try { chkBranch = decodeURIComponent(kv.slice(i + 1)); } catch (e) {}
+            }
+        });
+        if (chkBranch && SWITCH_BRANCHES.indexOf(chkBranch) === -1) chkBranch = null;
+        var update = getUpdateStatus(chkBranch);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(update));
         return;
     }
     if (req.url === '/api/update/apply' && req.method === 'POST') {
-        var upResult = doUpdate();
+        readJsonBody(req, function(err, body) {
+        var target = (!err && body && SWITCH_BRANCHES.indexOf(body.branch) !== -1)
+            ? body.branch : currentBranch();
+        var upResult = (target === currentBranch())
+            ? doUpdate()
+            : doSwitch(target);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(upResult));
         if (upResult.success) {
@@ -4202,6 +4246,49 @@ var server = http.createServer(function(req, res) {
                 stdio: 'ignore'
             }).unref();
         }
+        });
+        return;
+    }
+    // Flip the checked-out branch (whitelisted) and restart the
+    // server — the page reloads itself via the /api/version watcher.
+    // Filming workflow: swap dev ⇄ meshcore_demo from the device UI.
+    if (req.url === '/api/update/switch' && req.method === 'POST') {
+        readJsonBody(req, function(err, data) {
+            var br = data && data.branch;
+            if (err || SWITCH_BRANCHES.indexOf(br) === -1) {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ success: false, error: 'Bad branch' }));
+                return;
+            }
+            var swOk = true, swOut = '';
+            logUpdate('Switching branch to ' + br);
+            try {
+                swOut += execSync('git -C ' + UPDATE_REPO + ' fetch origin +' + br
+                    + ':refs/remotes/origin/' + br + ' 2>&1',
+                    { encoding: 'utf8', timeout: 30000 });
+                // -B: create-or-reset the local branch onto the fresh
+                // remote tip; -f drops any stray local edits.
+                swOut += execSync('git -C ' + UPDATE_REPO + ' checkout -f -B ' + br
+                    + ' refs/remotes/origin/' + br + ' 2>&1',
+                    { encoding: 'utf8', timeout: 15000 });
+            } catch (e) {
+                swOk = false;
+                swOut += (e.stdout || '') + (e.stderr || '') + (e.message || '');
+            }
+            logUpdate('switch ' + (swOk ? 'ok' : 'failed') + ': ' + swOut.slice(-300));
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: swOk,
+                error: swOk ? null : swOut.slice(-300) }));
+            if (swOk) {
+                var swSpawn = require('child_process').spawn;
+                swSpawn('systemd-run', ['--collect', '--no-block', 'sh', '-c',
+                    'systemctl daemon-reload' +
+                    ' && systemctl restart fake-flipctl-node-server.service'], {
+                    detached: true,
+                    stdio: 'ignore'
+                }).unref();
+            }
+        });
         return;
     }
     if (req.url === '/api/routing') {
