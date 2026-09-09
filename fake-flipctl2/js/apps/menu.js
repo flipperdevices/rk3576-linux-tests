@@ -247,10 +247,12 @@ var MenuScene = (function() {
         return new SubMenuScene(sm, 'UI Demos', [
             'Boot menu - UI demo',
             'Boot Menu v3',
+            'MESHCORE',
             'Power menu - UI demo'
         ], {
             'Boot menu - UI demo':  function() { return new UIDemoScene(sm); },
             'Boot Menu v3':         function() { return new BootMenuV2DemoScene(sm); },
+            'MESHCORE':             function() { return new MeshcoreDemoScene(sm); },
             'Power menu - UI demo': function() { return new PowerMenuUIDemoScene(sm); }
         });
     }

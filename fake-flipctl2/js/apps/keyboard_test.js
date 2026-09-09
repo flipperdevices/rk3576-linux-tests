@@ -99,6 +99,14 @@ var TextInputScreen = (function() {
         // caption per-form. Falls back to a generic placeholder
         // when none is supplied.
         this.fieldTitle = (typeof opts.title === 'string') ? opts.title : 'Text field title';
+        // Optional char budget: input is blocked past it and a gray
+        // "N left" counter rides the title line, flush right.
+        this._maxLen = (typeof opts.maxLen === 'number' && opts.maxLen > 0)
+            ? opts.maxLen : null;
+        // Big multi-line field (message composer): a fixed
+        // full-width box under the title with word-wrapped text,
+        // instead of the auto-sizing single-line field.
+        this._bigField = !!opts.bigField;
         // Commit / discard callbacks. Caller-supplied so the
         // same screen can plug into different downstream wiring
         // (Wi-Fi password store, future form submission, …).
@@ -209,6 +217,11 @@ var TextInputScreen = (function() {
                 } else {
                     // Insert at the cursor position, then
                     // advance the cursor past the inserted char.
+                    // A full char budget swallows the keypress.
+                    if (self._maxLen !== null
+                            && self.inputText.length >= self._maxLen) {
+                        return;
+                    }
                     self.inputText = self.inputText.slice(0, self._inputCursor)
                         + char
                         + self.inputText.slice(self._inputCursor);
@@ -260,7 +273,9 @@ var TextInputScreen = (function() {
         this._backspaceBtn = new UI.IconTabButton(Icons.backspace, BACKSPACE_BTN_X, tabBtnY, TAB_BTN_W, 'del', function() {
             if (self.keyboard && self.keyboard.onChar) self.keyboard.onChar('\b');
         });
-        this._doneBtn      = new UI.RightButton( 'Done',  BTN_W, 'run', function() { /* run → pop handled in handleInput */ });
+        this._doneBtn      = new UI.RightButton(
+            (typeof opts.doneLabel === 'string' && opts.doneLabel) || 'Done',
+            BTN_W, 'run', function() { /* run → pop handled in handleInput */ });
         this._bottomBtns = [this._closeBtn, this._123Btn, this._backspaceBtn, this._doneBtn];
         // Focus state. 'keyboard' = the on-screen Keyboard owns
         // the cursor; 'tab123' = the 123 tab button is highlighted
@@ -1039,6 +1054,33 @@ var TextInputScreen = (function() {
         }
     };
 
+    // Greedy word-wrap for the big composer field. Returns
+    // [{ start, end, str }] with character offsets into `text`
+    // (end exclusive) so the cursor index maps onto a line.
+    // Overlong words hard-break mid-word.
+    TextInputScreen.prototype._wrapInputText = function(text, maxW) {
+        var F = HaxrCorp4090FlipCTL;
+        var lines = [];
+        if (!text) return lines;
+        var start = 0, i = 0, lastSpace = -1;
+        while (i < text.length) {
+            var slice = text.slice(start, i + 1);
+            if (F.textWidth(slice) > maxW && i > start) {
+                var brk = (lastSpace > start) ? lastSpace + 1 : i;
+                lines.push({ start: start, end: brk,
+                             str: text.slice(start, brk) });
+                start = brk;
+                lastSpace = -1;
+                continue;
+            }
+            if (text[i] === ' ') lastSpace = i;
+            i++;
+        }
+        lines.push({ start: start, end: text.length,
+                     str: text.slice(start) });
+        return lines;
+    };
+
     TextInputScreen.prototype.render = function(canvas) {
         var ctx = canvas.ctx;
         canvas.clear('#fff');
@@ -1053,11 +1095,22 @@ var TextInputScreen = (function() {
         // round to the same nearest pixel as the input field
         // does — keeps title and field visually anchored on the
         // same axis.
-        var titleY = 24;
+        // Big composer: the title/counter line rides 2 px higher so
+        // it clears the taller input box (top at y=31).
+        var titleY = this._bigField ? 20 : 24;
         if (this.fieldTitle) {
             var titleW = HaxrCorp4090FlipCTL.textWidth(this.fieldTitle);
             var titleX = Math.round((canvas.w - titleW) / 2);
             HaxrCorp4090FlipCTL.draw(ctx, this.fieldTitle, titleX, titleY, '#000');
+        }
+        // Remaining-characters counter, flush right on the title
+        // line (only when a maxLen budget was configured).
+        if (this._maxLen !== null) {
+            var chLeft = Math.max(0, this._maxLen - this.inputText.length);
+            var chTxt  = chLeft + ' left';
+            HaxrCorp4090FlipCTL.draw(ctx, chTxt,
+                canvas.w - 4 - HaxrCorp4090FlipCTL.textWidth(chTxt),
+                titleY, '#696969');
         }
 
         // Input field auto-sizing. Starts 150 px wide; grows
@@ -1070,17 +1123,27 @@ var TextInputScreen = (function() {
         var INPUT_PAD       = 6;
         var INPUT_MIN_W     = 150;
         var INPUT_MAX_W     = 238;
-        var inputH          = 14;
-        var fullTextWidth   = HaxrCorp4090FlipCTL.textWidth(this.inputText);
-        var inputW          = fullTextWidth + INPUT_PAD * 2;
-        if (inputW < INPUT_MIN_W) inputW = INPUT_MIN_W;
-        if (inputW > INPUT_MAX_W) inputW = INPUT_MAX_W;
-        // Centre the field horizontally as it grows so the title
-        // and field stay visually anchored to the same axis.
-        // Math.round matches the title's centering — both pick
-        // the same side when (canvas.w - w) is odd.
-        var inputX = Math.round((canvas.w - inputW) / 2);
-        var inputY = titleY + 14;
+        var inputH, inputW, inputX, inputY;
+        if (this._bigField) {
+            // Composer box — exact geometry from the design mock:
+            // (4, 31), 246 × 35.
+            inputX = 4;
+            inputY = 31;
+            inputW = 246;
+            inputH = 35;
+        } else {
+            inputH = 14;
+            var fullTextWidth = HaxrCorp4090FlipCTL.textWidth(this.inputText);
+            inputW = fullTextWidth + INPUT_PAD * 2;
+            if (inputW < INPUT_MIN_W) inputW = INPUT_MIN_W;
+            if (inputW > INPUT_MAX_W) inputW = INPUT_MAX_W;
+            // Centre the field horizontally as it grows so the title
+            // and field stay visually anchored to the same axis.
+            // Math.round matches the title's centering — both pick
+            // the same side when (canvas.w - w) is odd.
+            inputX = Math.round((canvas.w - inputW) / 2);
+            inputY = titleY + 14;
+        }
         var inputFrame = new ResponsiveFrame({
             x: inputX, y: inputY,
             width: inputW, height: inputH,
@@ -1125,6 +1188,39 @@ var TextInputScreen = (function() {
         // markers (HaxrCorp4090FlipCTL doesn't ship a triple-dot
         // glyph), keeping the cursor in view.
         this.cursor.update();
+        if (this._bigField) {
+            // Word-wrapped, top-left anchored text. When the text
+            // outgrows the box the window slides so the cursor's
+            // line stays visible (tail-anchored while typing).
+            var bTextX  = inputX + INPUT_PAD;
+            var bTextY  = inputY + 4;
+            var bInnerW = inputW - INPUT_PAD * 2;
+            var LINE_H  = 11;
+            var maxLines = Math.floor((inputH - 8) / LINE_H) + 1;   // 3
+            var lines = this._wrapInputText(this.inputText, bInnerW);
+            // Locate the cursor's line.
+            var curLine = 0;
+            for (var li = 0; li < lines.length; li++) {
+                if (this._inputCursor >= lines[li].start
+                        && this._inputCursor <= lines[li].end) curLine = li;
+            }
+            var first = Math.max(0, Math.min(lines.length - maxLines,
+                                             curLine - (maxLines - 1)));
+            if (lines.length <= maxLines) first = 0;
+            for (var ln = first; ln < Math.min(lines.length, first + maxLines); ln++) {
+                var rowY = bTextY + (ln - first) * LINE_H;
+                HaxrCorp4090FlipCTL.draw(ctx, lines[ln].str, bTextX, rowY, '#000');
+                if (this.cursor.isVisible() && ln === curLine) {
+                    var cx = bTextX + HaxrCorp4090FlipCTL.textWidth(
+                        lines[ln].str.slice(0, this._inputCursor - lines[ln].start)) + 1;
+                    canvas.drawCursor(cx, rowY, 1, 11, '#000');
+                }
+            }
+            // Empty text: still blink the cursor at the box origin.
+            if (lines.length === 0 && this.cursor.isVisible()) {
+                canvas.drawCursor(bTextX + 1, bTextY, 1, 11, '#000');
+            }
+        } else {
         var textX  = inputX + INPUT_PAD;
         var textY  = inputY + Math.floor((inputH - 11) / 2);
         var innerW = inputW - INPUT_PAD * 2;
@@ -1141,6 +1237,7 @@ var TextInputScreen = (function() {
                 + HaxrCorp4090FlipCTL.textWidth(this.inputText.slice(seg.left, this._inputCursor))
                 + 1;
             canvas.drawCursor(cursorX, textY, 1, 11, '#000');
+        }
         }
 
         // Live validation message — drawn 3 px below the input

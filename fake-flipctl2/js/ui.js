@@ -510,6 +510,12 @@ var UI = (function() {
         this.onPress = onPress || null;
     }
     MiddleButton.prototype = _makeButton('drawMiddleButton');
+    // Optional sprite drawn right of the label (set `.icon`); the
+    // generic _makeButton render doesn't know the extra arg.
+    MiddleButton.prototype.render = function(canvas) {
+        canvas.drawMiddleButton(this.text, this.x, this.w,
+            this.pressed, this.disabled, this.icon || null);
+    };
 
     // Icon-only middle button — same slot positioning as MiddleButton,
     // but renders a centred icon instead of a text label

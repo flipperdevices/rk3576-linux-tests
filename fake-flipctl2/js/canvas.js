@@ -83,7 +83,9 @@ var FlipCanvas = (function() {
     }
 
     // Middle button — both top corners rounded
-    FlipCanvas.prototype.drawMiddleButton = function(text, x, w, pressed, disabled) {
+    // `iconRight` (optional): a sprite drawn to the RIGHT of the
+    // label; the text+gap+icon block is centred as one unit.
+    FlipCanvas.prototype.drawMiddleButton = function(text, x, w, pressed, disabled, iconRight) {
         var y = this.h - BTN_H;
         // Disabled: keep the normal (white) fill; only the outline and text go
         // grey, so the button reads as inactive without a solid grey block.
@@ -113,7 +115,22 @@ var FlipCanvas = (function() {
         // Right border straight
         this.ctx.fillRect(x + w - 1, y + 3, 1, BTN_H - 3);
 
-        _btnText(this.ctx, text, x, w, y, c.fg);
+        if (iconRight) {
+            // Text + gap + icon centred as one block, icon on the
+            // RIGHT of the label (cf. _btnIconText, which is left).
+            var GAPR = 3;
+            var twR = HaxrCorp4090FlipCTL.textWidth(text);
+            var sxR = x + Math.floor((w - (twR + GAPR + iconRight.w)) / 2);
+            HaxrCorp4090FlipCTL.draw(this.ctx, text, sxR, y + 2, c.fg);
+            var iyR = y + Math.floor((BTN_H - iconRight.h) / 2) + 1;
+            if (iconRight.grayscale) {
+                this.drawSprite(iconRight, sxR + twR + GAPR, iyR, c.fg);
+            } else {
+                this.drawIcon(iconRight, sxR + twR + GAPR, iyR, c.fg);
+            }
+        } else {
+            _btnText(this.ctx, text, x, w, y, c.fg);
+        }
     };
 
     // Icon-only middle button — same body as drawMiddleButton but with
