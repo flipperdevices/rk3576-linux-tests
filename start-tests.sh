@@ -285,6 +285,11 @@ main() {
     # Wait for system monitoring to complete
     if [ "$RUN_TEMPERATURE" = true ]; then
         wait $MONITOR_PID
+    elif [ "$RUN_CPU_STRESS" = true ]; then
+        # Nothing else is keeping time, so hold here for the requested duration.
+        # cpu_test.sh runs stress-ng until the kill below, so without this the
+        # stress test gets killed immediately after it starts.
+        sleep $((TEST_DURATION * 60))
     fi
     
     # Kill CPU stress test when monitoring is done
